@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>教会伴奏播放器</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    margin: 0; padding: 14px; max-width: 560px; margin-inline: auto;
+    background: #f7f4ee; color: #222;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #1c1a17; color: #eee; } }
+  h1 { font-size: 21px; margin: 2px 0 10px; }
+  .card {
+    background: rgba(127,127,127,0.08); border: 1px solid rgba(127,127,127,0.25);
+    border-radius: 14px; padding: 14px; margin-bottom: 12px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 10px; opacity: 0.7; font-weight: 600; }
+  button {
+    font-size: 17px; padding: 12px 16px; border-radius: 10px;
+    background: #b98a2f; color: #fff; border: none; cursor: pointer;
+  }
+  button.secondary { background: rgba(127,127,127,0.28); color: inherit; }
+  button:disabled { opacity: 0.4; }
+  select, input[type="file"] { font-size: 16px; width: 100%; padding: 10px; margin-top: 8px; }
+  .status { font-size: 14px; margin-top: 8px; min-height: 20px; line-height: 1.5; }
+  .ok { color: #2e9e4f; } .warn { color: #c0392b; }
+  .seg { display: flex; gap: 8px; }
+  .seg button { flex: 1; background: rgba(127,127,127,0.22); color: inherit; font-size: 16px; }
+  .seg button.on { background: #b98a2f; color: #fff; font-weight: 700; }
+  .songname { font-size: 24px; font-weight: 700; line-height: 1.3; word-break: break-all; }
+  .badge {
+    display: inline-block; font-size: 14px; font-weight: 700; padding: 3px 12px;
+    border-radius: 999px; margin-left: 8px; vertical-align: 3px; background: rgba(127,127,127,0.3);
+  }
+  .badge.playing { background: #b98a2f; color: #fff; }
+  .badge.holding { background: #2e9e4f; color: #fff; }
+  .time { font-size: 14px; opacity: 0.8; margin-top: 4px; }
+  #progressWrap {
+    height: 26px; background: rgba(127,127,127,0.2); border-radius: 13px; margin: 12px 0 4px;
+    position: relative; overflow: hidden; cursor: pointer;
+  }
+  #progressBar { height: 100%; width: 0%; background: #b98a2f; }
+  #btnMain {
+    width: 100%; height: 92px; font-size: 26px; font-weight: 700; border-radius: 16px; margin-top: 12px;
+  }
+  #btnMain.go { background: #2e9e4f; }
+  .transport { display: flex; gap: 10px; margin-top: 10px; }
+  .transport button { flex: 1; font-size: 19px; padding: 16px 0; }
+  #btnHold.armed { background: #d35400; color: #fff; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .row label { font-size: 16px; white-space: nowrap; }
+  .row select { margin-top: 0; flex: 1; }
+  .stepper { display: flex; align-items: center; gap: 10px; flex: 1; }
+  .stepper button { width: 56px; font-size: 22px; padding: 10px 0; }
+  .stepper .val { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+  .setlist { list-style: none; margin: 0; padding: 0; }
+  .setlist li {
+    display: flex; align-items: center; gap: 10px; padding: 13px 10px; border-radius: 10px;
+    border: 1px solid rgba(127,127,127,0.25); margin-bottom: 8px; font-size: 17px; cursor: pointer;
+  }
+  .setlist li.current { border-color: #b98a2f; background: rgba(185,138,47,0.14); font-weight: 700; }
+  .setlist li .idx { opacity: 0.55; font-size: 14px; }
+  .setlist li .del {
+    margin-left: auto; background: none; color: inherit; opacity: 0.5; font-size: 19px; padding: 4px 10px;
+  }
+  .note { font-size: 13px; opacity: 0.65; line-height: 1.7; }
+</style>
+</head>
+<body>
+<h1>🎹 教会伴奏播放器</h1>
+
+<div class="card">
+  <h2>声音从哪里出</h2>
+  <div class="seg">
+    <button id="segSpeaker" class="on">📱 手机扬声器</button>
+    <button id="segPiano">🎹 电钢琴(连线)</button>
+  </div>
+  <div id="pianoBox" style="display:none">
+    <button id="btnConnect" style="margin-top:10px">连接钢琴</button>
+    <select id="selOutput" style="display:none"></select>
+    <div class="status" id="connStatus">先用线把手机和琴的 TO HOST 口接好,再点「连接钢琴」。</div>
+  </div>
+  <div class="status" id="spkStatus">先用手机扬声器试听、练操作;线到了插上琴,切到「电钢琴」就是琴发声。</div>
+</div>
+
+<div class="card">
+  <h2>正在播放</h2>
+  <div><span class="songname" id="songName">—</span><span class="badge" id="stateBadge">待命</span></div>
+  <div id="progressWrap"><div id="progressBar"></div></div>
+  <div class="time"><span id="timeCur">0:00</span> / <span id="timeTot">0:00</span>　<span id="barInfo"></span></div>
+  <button id="btnMain">▶ 开始</button>
+  <div class="transport">
+    <button id="btnHold" class="secondary">✋ 等一等</button>
+    <button id="btnStop" class="secondary">⏹ 结束</button>
+  </div>
+  <div class="row">
+    <label>自动等</label>
+    <select id="selAutoHold">
+      <option value="0">不自动等(全靠手按)</option>
+      <option value="2">每 2 小节等一次</option>
+      <option value="4" selected>每 4 小节等一次(约一句)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>速度</label>
+    <div class="stepper">
+      <button class="secondary" id="btnSpeedDown">−</button>
+      <span class="val" id="speedVal">100%</span>
+      <button class="secondary" id="btnSpeedUp">＋</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>移调</label>
+    <div class="stepper">
+      <button class="secondary" id="btnTransDown">−</button>
+      <span class="val" id="transVal">原调</span>
+      <button class="secondary" id="btnTransUp">＋</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>本次歌单(点歌名 = 备好待命)</h2>
+  <ul class="setlist" id="setlist"></ul>
+  <button class="secondary" id="btnAdd">＋ 添加歌曲(.mid 文件,可多选)</button>
+  <input type="file" id="fileInput" accept=".mid,.midi,audio/midi" multiple style="display:none">
+  <div class="status" id="songStatus"></div>
+</div>
+
+<p class="note">怎么用:①排歌单,把这次要唱的歌按顺序点好;②点大按钮开始,伴奏唱到句尾会自己停住等(状态变绿「等唱中」),大家唱完、点大按钮继续下一句;③整首普遍唱快了或慢了,用速度 ＋/− 顺势带;觉得调高了低了,用移调;④一首唱完,自动备好下一首停在待命,中间说话、祷告多久都行,点大按钮开始下一首。「等一等」是随时手动版:播放中按一下,伴奏在下一小节停住等,再按大按钮继续。</p>
+
+<script>
+// MidiCore —— 解析标准 MIDI 文件(.mid),把所有轨道合成一条带秒数的时间线。
+// 纯计算,不碰网页和硬件,所以可以在 Node 里单独测试。
+"use strict";
+
+// 读一个变长数值(MIDI 文件里表示时间间隔的格式,和乐高积木一样一节一节拼)
+function readVlq(bytes, pos) {
+  let value = 0;
+  let p = pos;
+  for (;;) {
+    const b = bytes[p++];
+    value = (value << 7) | (b & 0x7f);
+    if (!(b & 0x80)) break;
+  }
+  return [value, p];
+}
+
+// 解析整个 .mid 文件
+function parseMidi(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const str = (a, b) => String.fromCharCode(...u8.slice(a, b));
+  if (str(0, 4) !== "MThd") throw new Error("不是 MIDI 文件(缺 MThd 头)");
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const format = dv.getUint16(8);
+  const nTracks = dv.getUint16(10);
+  const division = dv.getUint16(12);
+  if (division & 0x8000) throw new Error("暂不支持 SMPTE 时间格式的文件");
+  const ppq = division;
+
+  const rawEvents = [];   // {tick, data:[...]} 所有通道消息原样保留
+  const tempoMap = [];    // {tick, usPerBeat}
+  let timeSig = { beatsPerBar: 4, beatUnit: 4 }; // 拍号,文件没写就按 4/4
+  let pos = 8 + dv.getUint32(4);
+
+  for (let t = 0; t < nTracks; t++) {
+    if (str(pos, pos + 4) !== "MTrk") throw new Error("轨道数据损坏");
+    const len = dv.getUint32(pos + 4);
+    let p = pos + 8;
+    const end = p + len;
+    let tick = 0;
+    let running = 0;
+    while (p < end) {
+      let delta;
+      [delta, p] = readVlq(u8, p);
+      tick += delta;
+      let status = u8[p];
+      if (status < 0x80) {
+        status = running; // 沿用上一个状态字节(running status)
+      } else {
+        p++;
+        if (status < 0xf0) running = status;
+      }
+      if (status === 0xff) {
+        // 元事件:类型 + 长度 + 数据
+        const type = u8[p++];
+        let mlen;
+        [mlen, p] = readVlq(u8, p);
+        if (type === 0x51 && mlen === 3) {
+          const us = (u8[p] << 16) | (u8[p + 1] << 8) | u8[p + 2];
+          tempoMap.push({ tick, usPerBeat: us });
+        }
+        if (type === 0x58 && mlen >= 2) {
+          // 拍号:分子 + 分母(以 2 的幂存,如 2 表示 4 分音符)
+          timeSig = { beatsPerBar: u8[p], beatUnit: Math.pow(2, u8[p + 1]) };
+        }
+        p += mlen;
+      } else if (status === 0xf0 || status === 0xf7) {
+        let slen;
+        [slen, p] = readVlq(u8, p);
+        p += slen; // SysEx 跳过不发
+      } else {
+        const hi = status & 0xf0;
+        const nData = hi === 0xc0 || hi === 0xd0 ? 1 : 2;
+        const data = [status];
+        for (let i = 0; i < nData; i++) data.push(u8[p++]);
+        rawEvents.push({ tick, data });
+      }
+    }
+    pos = end;
+  }
+
+  // 按 tick 排序,生成带秒数的事件表
+  tempoMap.sort((a, b) => a.tick - b.tick);
+  if (!tempoMap.length || tempoMap[0].tick > 0) {
+    tempoMap.unshift({ tick: 0, usPerBeat: 500000 }); // 默认 120 bpm
+  }
+  function tickToSeconds(tick) {
+    let sec = 0;
+    let prevTick = 0;
+    let us = tempoMap[0].usPerBeat;
+    for (const seg of tempoMap) {
+      if (seg.tick >= tick) break;
+      sec += ((seg.tick - prevTick) / ppq) * (us / 1e6);
+      prevTick = seg.tick;
+      us = seg.usPerBeat;
+    }
+    sec += ((tick - prevTick) / ppq) * (us / 1e6);
+    return sec;
+  }
+
+  rawEvents.sort((a, b) => a.tick - b.tick);
+  const events = rawEvents.map((e) => ({ tick: e.tick, sec: tickToSeconds(e.tick), data: e.data }));
+  const lastTick = events.length ? events[events.length - 1].tick : 0;
+  return {
+    format,
+    ppq,
+    timeSig,
+    events,
+    durationSec: tickToSeconds(lastTick),
+    totalTicks: lastTick,
+    tickToSeconds,
+  };
+}
+
+// 数一数真正的音符按下次数(力度>0 的 NoteOn)
+function countNotes(events) {
+  return events.filter((e) => (e.data[0] & 0xf0) === 0x90 && e.data[2] > 0).length;
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { parseMidi, countNotes };
+}
+
+</script>
+<script>
+// PlayerCore —— 播放引擎:前视调度 + 等待保持 + 实时变速 + 移调安全。
+// 纯逻辑:时钟和发声口都从外面注入,所以可以在 Node 里用假时钟验透。
+"use strict";
+
+const EPS = 1e-9;
+
+function isNoteOn(data) {
+  return (data[0] & 0xf0) === 0x90 && data[2] > 0;
+}
+function isNoteOff(data) {
+  const hi = data[0] & 0xf0;
+  return hi === 0x80 || ((data[0] & 0xf0) === 0x90 && data[2] === 0);
+}
+
+// 一小节有多少 tick,以及每一小节起点对应的秒数(不含第 0 小节和曲尾)
+function barBoundariesSec(song) {
+  const barTicks = (song.ppq * song.timeSig.beatsPerBar * 4) / song.timeSig.beatUnit;
+  const out = [];
+  for (let t = barTicks; t < song.totalTicks; t += barTicks) {
+    out.push(song.tickToSeconds(t));
+  }
+  return { barTicks, boundaries: out };
+}
+
+function createPlayer(opts) {
+  const song = opts.song;
+  const sink = opts.sink;               // { send(data, tsMs), silence() }
+  const now = opts.now;                 // () => ms
+  const onState = opts.onState || (() => {});
+  const onEnd = opts.onEnd || (() => {});
+  const LOOKAHEAD = 0.15;               // 提前 0.15 秒把音符发出去排队
+
+  let state = "idle";                   // idle | playing | holding | paused | ended
+  let playhead = 0;                     // 当前位置(歌曲秒)
+  let nextIdx = 0;                      // 下一个还没发的事件
+  let lastNow = now();
+  let rate = 1.0;
+  let transpose = 0;
+  let endFired = false;
+
+  const { barTicks, boundaries } = barBoundariesSec(song);
+  let holdPoints = [];                  // 排序后的等待点(秒)
+  let holdIdx = 0;                      // 下一个等待点
+  let autoEveryBars = 0;                // 0=关;N=每 N 小节自动等
+  let armed = false;                    // 手动"等一等"已布防
+
+  const active = new Map();             // (ch*128+原音高) -> 实际发出的音高(移调后)
+
+  function setState(s) {
+    if (state !== s) { state = s; onState(s); }
+  }
+
+  function rebuildHoldPoints() {
+    holdPoints = [];
+    if (autoEveryBars > 0) {
+      for (let i = 0; i < boundaries.length; i++) {
+        if ((i + 1) % autoEveryBars === 0) holdPoints.push(boundaries[i]);
+      }
+    }
+    holdIdx = 0;
+    while (holdIdx < holdPoints.length && holdPoints[holdIdx] <= playhead + EPS) holdIdx++;
+  }
+
+  // 移调并记账:NoteOn 记下实际音高,NoteOff 按账本找,保证开关成对、不留长鸣音
+  function xposeSend(data, ts) {
+    const hi = data[0] & 0xf0;
+    const ch = data[0] & 0x0f;
+    if (ch === 9) { sink.send(data, ts); return; } // 鼓通道不移调
+    if (isNoteOn(data)) {
+      const sent = data[1] + transpose;
+      const key = ch * 128 + data[1];
+      if (sent < 0 || sent > 127) { active.set(key, -1); return; }
+      active.set(key, sent);
+      sink.send([data[0], sent, data[2]], ts);
+      return;
+    }
+    if (isNoteOff(data)) {
+      const key = ch * 128 + data[1];
+      const sent = active.get(key);
+      active.delete(key);
+      if (sent === undefined) { sink.send(data, ts); return; }
+      if (sent === -1) return;
+      sink.send([data[0], sent, data[2]], ts);
+      return;
+    }
+    sink.send(data, ts);
+  }
+
+  function silence() {
+    active.clear();
+    sink.silence();
+  }
+
+  // 跳转/起播前把 pos 之前的音色切换补发一遍,琴用对音色
+  function catchUpPrograms(posSec) {
+    for (const ev of song.events) {
+      if (ev.sec >= posSec) break;
+      const hi = ev.data[0] & 0xf0;
+      if (hi === 0xc0 || hi === 0xd0) sink.send(ev.data, now());
+    }
+  }
+
+  function firstIndexAtOrAfter(sec) {
+    let i = 0;
+    while (i < song.events.length && song.events[i].sec < sec - EPS) i++;
+    return i;
+  }
+
+  function play() {
+    if (state === "playing") return;
+    if (state === "ended" || playhead >= song.durationSec - EPS) {
+      playhead = 0; nextIdx = 0; endFired = false; rebuildHoldPoints();
+    }
+    lastNow = now();
+    setState("playing");
+  }
+
+  function pause() {
+    if (state !== "playing" && state !== "holding") return;
+    silence();
+    // 暂停后重新对齐:已发未响的排队消息被 silence 清掉,索引退回到 playhead 之后第一个事件
+    nextIdx = firstIndexAtOrAfter(playhead);
+    holdIdx = 0;
+    while (holdIdx < holdPoints.length && holdPoints[holdIdx] <= playhead + EPS) holdIdx++;
+    setState("paused");
+  }
+
+  function stop() {
+    silence();
+    playhead = 0; nextIdx = 0; endFired = false; armed = false;
+    rebuildHoldPoints();
+    setState("idle");
+  }
+
+  function seek(sec) {
+    const wasActive = state === "playing" || state === "holding";
+    silence();
+    playhead = Math.max(0, Math.min(song.durationSec, sec));
+    nextIdx = firstIndexAtOrAfter(playhead);
+    endFired = false; armed = false;
+    holdIdx = 0;
+    while (holdIdx < holdPoints.length && holdPoints[holdIdx] <= playhead + EPS) holdIdx++;
+    catchUpPrograms(playhead);
+    lastNow = now();
+    if (!wasActive && state !== "idle") setState("paused");
+    if (state === "holding") setState("paused");
+  }
+
+  // 等待中点"继续",或播放中布防的等待被取消
+  function resume() {
+    if (state === "holding") { lastNow = now(); setState("playing"); }
+  }
+
+  // 大按钮"等一等":播放中按 = 在下一小节线等;等待中按 = 继续(等同 resume)
+  function holdButton() {
+    if (state === "holding") { resume(); return; }
+    if (state !== "playing") return;
+    if (armed) { armed = false; return; } // 再按一下取消布防
+    // 布防到下一小节线
+    const pos = playhead;
+    let target = null;
+    for (const b of boundaries) { if (b > pos + 0.05) { target = b; break; } }
+    if (target === null) return;
+    if (!holdPoints.includes(target)) {
+      holdPoints.push(target); holdPoints.sort((a, b) => a - b);
+      holdIdx = 0;
+      while (holdIdx < holdPoints.length && holdPoints[holdIdx] <= playhead + EPS) holdIdx++;
+    }
+    armed = true;
+  }
+
+  function tick() {
+    const t = now();
+    if (state !== "playing") { lastNow = t; return; }
+    const dt = Math.max(0, (t - lastNow) / 1000);
+    lastNow = t;
+    playhead += dt * rate;
+    if (playhead > song.durationSec) playhead = song.durationSec;
+
+    // 先看等待点是否落进前视窗
+    const hp = holdIdx < holdPoints.length ? holdPoints[holdIdx] : null;
+    if (hp !== null && hp <= playhead + LOOKAHEAD + EPS && nextIdx < song.events.length) {
+      // 把等待点之前的事件(和等待点上的非 NoteOn 事件)发完
+      while (nextIdx < song.events.length) {
+        const ev = song.events[nextIdx];
+        if (ev.sec < hp - EPS || (ev.sec <= hp + EPS && !isNoteOn(ev.data))) {
+          xposeSend(ev.data, t + Math.max(0, ((ev.sec - playhead) / rate) * 1000));
+          nextIdx++;
+        } else break;
+      }
+      // 等待点后面确实还有内容才停(曲尾不等)
+      if (nextIdx < song.events.length) {
+        playhead = hp;
+        holdIdx++;
+        armed = false;
+        setState("holding");
+        return;
+      }
+      holdIdx++;
+    }
+
+    // 正常前视发送
+    const limit = playhead + LOOKAHEAD;
+    while (nextIdx < song.events.length && song.events[nextIdx].sec <= limit + EPS) {
+      const ev = song.events[nextIdx];
+      xposeSend(ev.data, t + Math.max(0, ((ev.sec - playhead) / rate) * 1000));
+      nextIdx++;
+    }
+
+    // 播完
+    if (nextIdx >= song.events.length && playhead >= song.durationSec - EPS) {
+      setState("ended");
+      if (!endFired) { endFired = true; onEnd(); }
+    }
+  }
+
+  return {
+    play, pause, stop, seek, resume, holdButton, tick,
+    setRate(r) { if (r > 0.1 && r < 4) rate = r; },
+    getRate() { return rate; },
+    setTranspose(n) { transpose = n; },
+    getTranspose() { return transpose; },
+    setAutoHold(everyBars) { autoEveryBars = everyBars; rebuildHoldPoints(); },
+    getState() { return state; },
+    getPosition() { return playhead; },
+    isArmed() { return armed; },
+    getBarInfo() {
+      const posTick = song.totalTicks && song.durationSec
+        ? (playhead / song.durationSec) * song.totalTicks : 0;
+      // 用秒反查 tick 不准,改用事件无关的近似:以 tickToSeconds 二分找当前 tick
+      let lo = 0, hi = song.totalTicks;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (song.tickToSeconds(mid) < playhead) lo = mid + 1; else hi = mid; }
+      const totalBars = Math.max(1, Math.round(song.totalTicks / barTicks));
+      return { bar: Math.min(totalBars, Math.floor(lo / barTicks) + 1), totalBars };
+    },
+    durationSec: song.durationSec,
+  };
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { createPlayer, barBoundariesSec };
+}
+
+</script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+};
+
+// ---------------- 发声口:手机扬声器(Web Audio 小合成器,只为试听练手) ----------------
+const synth = {
+  ctx: null, master: null, voices: new Set(),
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    this.ctx = new AC();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = 0.55;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = "lowpass"; lp.frequency.value = 3600;
+    this.master.connect(lp); lp.connect(this.ctx.destination);
+  },
+  send(data, ts) {
+    this.ensure(); if (!this.ctx) return;
+    const hi = data[0] & 0xf0, ch = data[0] & 0x0f;
+    const when = this.ctx.currentTime + Math.max(0, (ts - performance.now()) / 1000);
+    if (hi === 0x90 && data[2] > 0) {
+      const f = 440 * Math.pow(2, (data[1] - 69) / 12);
+      const osc = this.ctx.createOscillator(); osc.type = "triangle"; osc.frequency.value = f;
+      const g = this.ctx.createGain();
+      const v = Math.max(0.08, (data[2] / 127) * 0.5);
+      g.gain.setValueAtTime(0, when);
+      g.gain.linearRampToValueAtTime(v, when + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0008, when + 2.6);
+      osc.connect(g); g.connect(this.master);
+      osc.start(when); osc.stop(when + 2.8);
+      const voice = { ch, note: data[1], osc, g };
+      this.voices.add(voice);
+      osc.onended = () => this.voices.delete(voice);
+    } else if (hi === 0x80 || (hi === 0x90 && data[2] === 0)) {
+      for (const voice of this.voices) {
+        if (voice.ch === ch && voice.note === data[1]) {
+          try {
+            voice.g.gain.cancelScheduledValues(when);
+            voice.g.gain.setTargetAtTime(0.0008, when, 0.03);
+            voice.osc.stop(when + 0.25);
+          } catch (e) {}
+        }
+      }
+    } else if (hi === 0xb0 && (data[1] === 120 || data[1] === 123)) {
+      this.silence();
+    }
+  },
+  silence() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (const voice of this.voices) {
+      try { voice.g.gain.cancelScheduledValues(t); voice.g.gain.setTargetAtTime(0.0008, t, 0.02); voice.osc.stop(t + 0.2); } catch (e) {}
+    }
+  },
+};
+
+// ---------------- 发声口:电钢琴(Web MIDI) ----------------
+let midiAccess = null, midiOutput = null;
+const midiSink = {
+  send(data, ts) { if (midiOutput) { try { midiOutput.send(data, ts); } catch (e) {} } },
+  silence() {
+    if (!midiOutput) return;
+    try { midiOutput.clear(); } catch (e) {}
+    const t = performance.now();
+    for (let ch = 0; ch < 16; ch++) {
+      midiOutput.send([0xb0 | ch, 123, 0], t);
+      midiOutput.send([0xb0 | ch, 120, 0], t);
+    }
+  },
+};
+
+// 当前发声口(可切换,引擎只认这个转接层)
+let useSpeaker = true;
+const sink = {
+  send(data, ts) { (useSpeaker ? synth : midiSink).send(data, ts); },
+  silence() { (useSpeaker ? synth : midiSink).silence(); },
+};
+
+// ---------------- 歌单与播放器 ----------------
+const items = [];        // {title, bytes, rate, transpose}
+let curIdx = -1;
+let player = null;
+let engineTimer = null;
+let wakeLock = null;
+
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+const AMAZING_B64 = "TVRoZAAAAAYAAQADAeBNVHJrAAAAEwD/UQMLcbAA/1gEAwIYCAD/LwBNVHJrAAABSwDAAACQQ1yDVoBDAAqQSFyDVoBIAAqQTFyDVoBMAAqQSFyDVoBIAAqQTFyDVoBMAAqQSlyHNoBKAAqQSFyDVoBIAAqQRVyHNoBFAAqQQ1yDVoBDAAqQQ1yHNoBDAAqQSFyDVoBIAAqQTFyDVoBMAAqQSFyDVoBIAAqQTFyDVoBMAAqQSlyDVoBKAAqQTFyDVoBMAAqQT1yDVoBPAAqQSlyDVoBKAAqQTFyDVoBMAAqQT1yFRoBPAAqQTFyBZoBMAAqQSlyDVoBKAAqQSFyDVoBIAAqQRVyDVoBFAAqQQ1yDVoBDAAqQSFyDVoBIAAqQRVyDVoBFAAqQQ1yDVoBDAAqQQ1yDVoBDAAqQQ1yHNoBDAAqQSFyDVoBIAAqQTFyDVoBMAAqQSFyDVoBIAAqQTFyDVoBMAAqQSlyHNoBKAAqQSFyLFoBIAAD/LwBNVHJrAAADQgDBAINgkTBIg1aBMAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpE0PACRNzwAkTw8g1aBNAAAgTcAAIE8AAqRMEiDVoEwAAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpEpSINWgSkACpE1PACROTwAkTw8g1aBNQAAgTkAAIE8AAqRNTwAkTk8AJE8PINWgTUAAIE5AACBPAAKkTBIg1aBMAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpE0PACRNzwAkTw8g1aBNAAAgTcAAIE8AAqRMEiDVoEwAAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpErSINWgSsACpE3PACROzwAkT48g1aBNwAAgTsAAIE+AAqRNzwAkTs8AJE+PINWgTcAAIE7AACBPgAKkTBIg1aBMAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpE0PACRNzwAkTw8g1aBNAAAgTcAAIE8AAqRK0iDVoErAAqRNzwAkTs8AJE+PINWgTcAAIE7AACBPgAKkTc8AJE7PACRPjyDVoE3AACBOwAAgT4ACpEwSINWgTAACpE0PACRNzwAkTw8g1aBNAAAgTcAAIE8AAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkSlIg1aBKQAKkTU8AJE5PACRPDyDVoE1AACBOQAAgTwACpE1PACROTwAkTw8g1aBNQAAgTkAAIE8AAqRMEiDVoEwAAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwACpEwSINWgTAACpE0PACRNzwAkTw8g1aBNAAAgTcAAIE8AAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkStIg1aBKwAKkTc8AJE7PACRPjyDVoE3AACBOwAAgT4ACpE3PACROzwAkT48g1aBNwAAgTsAAIE+AAqRMEiDVoEwAAqRNDwAkTc8AJE8PINWgTQAAIE3AACBPAAKkTQ8AJE3PACRPDyDVoE0AACBNwAAgTwAAP8vAA==";
+items.push({ title: "奇异恩典 Amazing Grace", bytes: b64ToBytes(AMAZING_B64), rate: 1, transpose: 0 });
+
+function renderSetlist() {
+  const ul = $("setlist");
+  ul.innerHTML = "";
+  items.forEach((it, i) => {
+    const li = document.createElement("li");
+    if (i === curIdx) li.className = "current";
+    const idx = document.createElement("span"); idx.className = "idx"; idx.textContent = (i + 1) + ".";
+    const name = document.createElement("span"); name.textContent = it.title;
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "✕";
+    del.onclick = (ev) => { ev.stopPropagation(); removeItem(i); };
+    li.append(idx, name, del);
+    li.onclick = () => cue(i);
+    ul.appendChild(li);
+  });
+}
+
+function saveCurrentSettings() {
+  if (curIdx >= 0 && player) {
+    items[curIdx].rate = player.getRate();
+    items[curIdx].transpose = player.getTranspose();
+  }
+}
+
+function cue(i) {
+  if (i < 0 || i >= items.length) return;
+  saveCurrentSettings();
+  if (player) player.stop();
+  curIdx = i;
+  const it = items[i];
+  let song;
+  try { song = parseMidi(it.bytes); }
+  catch (e) { $("songStatus").innerHTML = '<span class="warn">《' + it.title + '》读不了:' + e.message + "</span>"; return; }
+  player = createPlayer({
+    song, sink, now: () => performance.now(),
+    onState: refreshUI,
+    onEnd: handleEnd,
+  });
+  player.setRate(it.rate || 1);
+  player.setTranspose(it.transpose || 0);
+  player.setAutoHold(parseInt($("selAutoHold").value, 10));
+  clearInterval(engineTimer);
+  engineTimer = setInterval(() => { if (player) player.tick(); }, 25);
+  $("songName").textContent = it.title;
+  $("songStatus").textContent = "";
+  renderSetlist();
+  refreshUI();
+}
+
+function removeItem(i) {
+  if (items.length <= 1) return;
+  items.splice(i, 1);
+  if (i === curIdx) { curIdx = -1; if (player) { player.stop(); player = null; } cue(Math.min(i, items.length - 1)); }
+  else { if (i < curIdx) curIdx--; renderSetlist(); }
+}
+
+function handleEnd() {
+  releaseWake();
+  if (curIdx + 1 < items.length) {
+    const nextTitle = items[curIdx + 1].title;
+    cue(curIdx + 1);
+    $("songStatus").innerHTML = '<span class="ok">上一首唱完了,已备好下一首《' + nextTitle + '》,点大按钮开始。</span>';
+  }
+  refreshUI();
+}
+
+// ---------------- 界面刷新 ----------------
+const STATE_TXT = { idle: "待命", playing: "播放中", holding: "等唱中", paused: "已暂停", ended: "已结束" };
+function refreshUI() {
+  const st = player ? player.getState() : "idle";
+  const badge = $("stateBadge");
+  badge.textContent = STATE_TXT[st] || st;
+  badge.className = "badge" + (st === "playing" ? " playing" : st === "holding" ? " holding" : "");
+  const btn = $("btnMain");
+  btn.classList.remove("go");
+  if (!player) { btn.textContent = "▶ 开始"; btn.disabled = true; return; }
+  btn.disabled = false;
+  if (st === "holding") { btn.textContent = "▶ 继续,唱下一句"; btn.classList.add("go"); }
+  else if (st === "playing") btn.textContent = "⏸ 暂停";
+  else if (st === "paused") btn.textContent = "▶ 继续播放";
+  else if (st === "ended") btn.textContent = "▶ 再播一次";
+  else btn.textContent = "▶ 开始《" + (items[curIdx] ? items[curIdx].title : "") + "》";
+  $("btnHold").textContent = player.isArmed() ? "✋ 已布防(再按取消)" : "✋ 等一等";
+  $("btnHold").classList.toggle("armed", player.isArmed());
+  $("speedVal").textContent = Math.round(player.getRate() * 100) + "%";
+  const tr = player.getTranspose();
+  $("transVal").textContent = tr === 0 ? "原调" : (tr > 0 ? "升高 " + tr : "降低 " + -tr) + " 个半音";
+  updateProgress();
+}
+
+function updateProgress() {
+  if (!player) return;
+  const pos = player.getPosition();
+  const tot = player.durationSec;
+  $("progressBar").style.width = (tot ? (pos / tot) * 100 : 0) + "%";
+  $("timeCur").textContent = fmtTime(pos);
+  $("timeTot").textContent = fmtTime(tot);
+  const bar = player.getBarInfo();
+  $("barInfo").textContent = "第 " + bar.bar + " / " + bar.totalBars + " 小节";
+}
+setInterval(updateProgress, 250);
+
+// ---------------- 按钮 ----------------
+async function keepWake() {
+  try { if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+function releaseWake() { try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} }
+
+$("btnMain").onclick = () => {
+  if (!player) return;
+  synth.ensure();
+  const st = player.getState();
+  if (st === "holding") { player.resume(); keepWake(); }
+  else if (st === "playing") player.pause();
+  else { player.play(); keepWake(); }
+  refreshUI();
+};
+$("btnHold").onclick = () => { if (player) { player.holdButton(); refreshUI(); } };
+$("btnStop").onclick = () => { if (player) { player.stop(); releaseWake(); refreshUI(); } };
+$("progressWrap").onclick = (ev) => {
+  if (!player) return;
+  const r = $("progressWrap").getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+  player.seek(ratio * player.durationSec);
+  refreshUI();
+};
+$("selAutoHold").onchange = () => { if (player) player.setAutoHold(parseInt($("selAutoHold").value, 10)); };
+$("btnSpeedUp").onclick = () => { if (player) { player.setRate(Math.min(1.5, player.getRate() + 0.05)); refreshUI(); } };
+$("btnSpeedDown").onclick = () => { if (player) { player.setRate(Math.max(0.5, player.getRate() - 0.05)); refreshUI(); } };
+$("btnTransUp").onclick = () => { if (player && player.getTranspose() < 11) { player.setTranspose(player.getTranspose() + 1); refreshUI(); } };
+$("btnTransDown").onclick = () => { if (player && player.getTranspose() > -11) { player.setTranspose(player.getTranspose() - 1); refreshUI(); } };
+
+$("btnAdd").onclick = () => $("fileInput").click();
+$("fileInput").onchange = async (ev) => {
+  const files = [...ev.target.files];
+  let added = 0;
+  for (const f of files) {
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      parseMidi(buf); // 先验一遍,坏文件不进单
+      items.push({ title: f.name.replace(/\.midi?$/i, ""), bytes: buf, rate: 1, transpose: 0 });
+      added++;
+    } catch (e) {
+      $("songStatus").innerHTML = '<span class="warn">《' + f.name + '》不是能用的 MIDI 文件,没加进歌单。</span>';
+    }
+  }
+  if (added) { renderSetlist(); if (curIdx < 0) cue(0); }
+  ev.target.value = "";
+};
+
+// ---------------- 发声切换与连琴 ----------------
+$("segSpeaker").onclick = () => setSink(true);
+$("segPiano").onclick = () => setSink(false);
+function setSink(speaker) {
+  if (player && (player.getState() === "playing" || player.getState() === "holding")) player.pause();
+  sink.silence();
+  useSpeaker = speaker;
+  $("segSpeaker").classList.toggle("on", speaker);
+  $("segPiano").classList.toggle("on", !speaker);
+  $("pianoBox").style.display = speaker ? "none" : "block";
+  $("spkStatus").style.display = speaker ? "block" : "none";
+  refreshUI();
+}
+
+$("btnConnect").onclick = async () => {
+  if (!navigator.requestMIDIAccess) {
+    $("connStatus").innerHTML = '<span class="warn">这个浏览器不支持 MIDI。请用手机上的 Chrome 打开本页。</span>';
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    refreshOutputs();
+    midiAccess.onstatechange = refreshOutputs;
+  } catch (e) {
+    $("connStatus").innerHTML = '<span class="warn">连接被拒绝了:' + e.message + "</span>";
+  }
+};
+function refreshOutputs() {
+  const sel = $("selOutput");
+  const outs = [...midiAccess.outputs.values()];
+  sel.innerHTML = "";
+  for (const o of outs) {
+    const opt = document.createElement("option");
+    opt.value = o.id; opt.textContent = o.name || "MIDI 设备";
+    sel.appendChild(opt);
+  }
+  if (outs.length) {
+    sel.style.display = "block";
+    midiOutput = outs.find((o) => o.id === sel.value) || outs[0];
+    sel.value = midiOutput.id;
+    $("connStatus").innerHTML = '<span class="ok">已连接:' + (midiOutput.name || "钢琴") + "。播放时琴会发声。</span>";
+  } else {
+    sel.style.display = "none";
+    midiOutput = null;
+    $("connStatus").innerHTML = '<span class="warn">没找到琴。检查线插好了没有、琴开机了没有,再点一次「连接钢琴」。</span>';
+  }
+}
+$("selOutput").onchange = () => {
+  midiOutput = [...midiAccess.outputs.values()].find((o) => o.id === $("selOutput").value) || null;
+};
+
+cue(0);
+})();
+</script>
+</body>
+</html>
