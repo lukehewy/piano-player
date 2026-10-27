@@ -511,9 +511,13 @@ const fmtTime = (s) => {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 };
 
-// ---------------- 发声口:手机扬声器(Web Audio 小合成器,只为试听练手) ----------------
+// ---------------- 发声口:手机扬声器(真钢琴采样音色;下不到时退回电子音,不耽误播放) ----------------
+function setSpkStatus(t) { try { const el = $("spkStatus"); if (el) el.textContent = t; } catch (e) {} }
 const synth = {
   ctx: null, master: null, voices: new Set(),
+  buffers: {}, sfMap: null, sfLoading: false, sfFailed: false, _lastNotes: [],
+  NOTE_NAMES: ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
+  noteName(m) { return this.NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1); },
   ensure() {
     if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -524,31 +528,93 @@ const synth = {
     const lp = this.ctx.createBiquadFilter();
     lp.type = "lowpass"; lp.frequency.value = 3600;
     this.master.connect(lp); lp.connect(this.ctx.destination);
+    this.startLoad();
+  },
+  startLoad() {
+    if (this.sfLoading || this.sfMap || this.sfFailed) return;
+    if (typeof document === "undefined" || typeof fetch !== "function" || !document.createElement) return;
+    this.sfLoading = true;
+    setSpkStatus("正在下载真钢琴音色(几 MB,只下一次,之后就快了)…");
+    const urls = [
+      "https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/acoustic_grand_piano-mp3.js",
+      "https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/FluidR3_GM/acoustic_grand_piano-mp3.js",
+    ];
+    const tryUrl = (i) => {
+      if (i >= urls.length) {
+        this.sfFailed = true;
+        setSpkStatus("真钢琴音色没下下来(可能没网),先用电子音试听;有网时刷新页面会再下。");
+        return;
+      }
+      try {
+        const s = document.createElement("script");
+        s.src = urls[i];
+        s.onload = () => {
+          try {
+            const sf = window.MIDI && window.MIDI.Soundfont && window.MIDI.Soundfont.acoustic_grand_piano;
+            if (sf) { this.sfMap = sf; setSpkStatus("钢琴音色已下载,正在准备…"); this.prepare(this._lastNotes); }
+            else tryUrl(i + 1);
+          } catch (e) { tryUrl(i + 1); }
+        };
+        s.onerror = () => tryUrl(i + 1);
+        (document.head || document.body).appendChild(s);
+      } catch (e) { tryUrl(i + 1); }
+    };
+    tryUrl(0);
+  },
+  async prepare(notes) {
+    if (notes && notes.length) this._lastNotes = notes;
+    this.ensure();
+    if (!this.ctx || !this.sfMap) return;
+    const need = [...new Set(this._lastNotes)].filter((m) => !this.buffers[m] && this.sfMap[this.noteName(m)]);
+    if (!need.length) { if (Object.keys(this.buffers).length) setSpkStatus("🎹 真钢琴音色已就绪"); return; }
+    setSpkStatus("正在准备钢琴音色…");
+    for (const m of need) {
+      try {
+        const ab = await (await fetch(this.sfMap[this.noteName(m)])).arrayBuffer();
+        this.buffers[m] = await this.ctx.decodeAudioData(ab);
+      } catch (e) {}
+    }
+    if (Object.keys(this.buffers).length) setSpkStatus("🎹 真钢琴音色已就绪");
   },
   send(data, ts) {
     this.ensure(); if (!this.ctx) return;
     const hi = data[0] & 0xf0, ch = data[0] & 0x0f;
     const when = this.ctx.currentTime + Math.max(0, (ts - performance.now()) / 1000);
     if (hi === 0x90 && data[2] > 0) {
-      const f = 440 * Math.pow(2, (data[1] - 69) / 12);
-      const osc = this.ctx.createOscillator(); osc.type = "triangle"; osc.frequency.value = f;
+      const buf = this.buffers[data[1]];
       const g = this.ctx.createGain();
-      const v = Math.max(0.08, (data[2] / 127) * 0.5);
-      g.gain.setValueAtTime(0, when);
-      g.gain.linearRampToValueAtTime(v, when + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.0008, when + 2.6);
-      osc.connect(g); g.connect(this.master);
-      osc.start(when); osc.stop(when + 2.8);
-      const voice = { ch, note: data[1], osc, g };
+      g.connect(this.master);
+      const v = Math.max(0.1, (data[2] / 127) * 0.9);
+      let node;
+      if (buf) {
+        // 真钢琴采样:音色本身带自然衰减,不再套合成包络
+        node = this.ctx.createBufferSource();
+        node.buffer = buf;
+        g.gain.setValueAtTime(v, when);
+        node.connect(g);
+        node.start(when);
+        node.stop(when + 8);
+      } else {
+        // 采样还没备好的音:退回三角波电子音(原来的声音)
+        const f = 440 * Math.pow(2, (data[1] - 69) / 12);
+        node = this.ctx.createOscillator(); node.type = "triangle"; node.frequency.value = f;
+        const vv = Math.max(0.08, (data[2] / 127) * 0.5);
+        g.gain.setValueAtTime(0, when);
+        g.gain.linearRampToValueAtTime(vv, when + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0008, when + 2.6);
+        node.connect(g);
+        node.start(when); node.stop(when + 2.8);
+      }
+      const voice = { ch, note: data[1], node, g };
       this.voices.add(voice);
-      osc.onended = () => this.voices.delete(voice);
+      node.onended = () => this.voices.delete(voice);
     } else if (hi === 0x80 || (hi === 0x90 && data[2] === 0)) {
       for (const voice of this.voices) {
         if (voice.ch === ch && voice.note === data[1]) {
           try {
             voice.g.gain.cancelScheduledValues(when);
-            voice.g.gain.setTargetAtTime(0.0008, when, 0.03);
-            voice.osc.stop(when + 0.25);
+            voice.g.gain.setTargetAtTime(0.0008, when, 0.045);
+            voice.node.stop(when + 0.4);
           } catch (e) {}
         }
       }
@@ -560,7 +626,7 @@ const synth = {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     for (const voice of this.voices) {
-      try { voice.g.gain.cancelScheduledValues(t); voice.g.gain.setTargetAtTime(0.0008, t, 0.02); voice.osc.stop(t + 0.2); } catch (e) {}
+      try { voice.g.gain.cancelScheduledValues(t); voice.g.gain.setTargetAtTime(0.0008, t, 0.02); voice.node.stop(t + 0.2); } catch (e) {}
     }
   },
 };
@@ -635,6 +701,7 @@ function cue(i) {
   let song;
   try { song = parseMidi(it.bytes); }
   catch (e) { $("songStatus").innerHTML = '<span class="warn">《' + it.title + '》读不了:' + e.message + "</span>"; return; }
+  { const ns = []; for (const e of song.events) { if ((e.data[0] & 0xf0) === 0x90 && e.data[2] > 0) ns.push(e.data[1]); } try { synth.prepare(ns); } catch (err) {} }
   player = createPlayer({
     song, sink, now: () => performance.now(),
     onState: refreshUI,
