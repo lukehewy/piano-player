@@ -537,6 +537,7 @@ const synth = {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.55;
     const lp = this.ctx.createBiquadFilter();
@@ -805,7 +806,7 @@ function updateProgress() {
 setInterval(updateProgress, 250);
 
 // ---------------- 声音解锁(别人的手机:浏览器/微信要先有一次点触才肯出声) ----------------
-function unlockAudio() { try { synth.ensure(); if (synth.ctx && synth.ctx.state === "suspended") synth.ctx.resume(); } catch (e) {} }
+function unlockAudio() { try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {} try { synth.ensure(); if (synth.ctx && synth.ctx.state === "suspended") synth.ctx.resume(); } catch (e) {} }
 try {
   ["pointerdown", "touchend", "click"].forEach((ev) => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
   document.addEventListener("WeixinJSBridgeReady", unlockAudio, false);
@@ -818,8 +819,11 @@ $("btnTestSound").onclick = async () => {
   const t = performance.now();
   [60, 64, 67, 72].forEach((n, i) => { synth.send([0x90, n, 100], t + i * 230); synth.send([0x80, n, 0], t + i * 230 + 600); });
   setTimeout(() => {
-    if (synth.ctx && synth.ctx.state === "running") setSpkStatus("🔊 刚才那几个钢琴音听到了吗?听到了声音就没问题——到下面歌单点一首歌,再按大按钮开始。");
-    else setSpkStatus("⚠️ 还是没声:先把手机静音开关关掉、音量调大;如果是在微信里打开的,点右上角「···」选「在浏览器打开」再试。");
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    if (synth.ctx && synth.ctx.state === "running") {
+      if (isIOS) setSpkStatus("🔊 听到钢琴声了吗?如果没听到:苹果手机多半是静音开关开着——把机身左侧小开关拨到【不露橙色】那边,再按音量+调大声,然后再点一次试听。听到了就回歌单点歌、按大按钮开始。");
+      else setSpkStatus("🔊 刚才那几个钢琴音听到了吗?听到了声音就没问题——到下面歌单点一首歌,再按大按钮开始。");
+    } else setSpkStatus("⚠️ 声音还没解锁:先点一下页面空白处,再点一次「试听一下」;如果是在微信里打开的,点右上角「···」选「在浏览器打开」再试。");
   }, 200);
 };
 
