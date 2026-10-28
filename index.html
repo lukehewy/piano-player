@@ -576,6 +576,19 @@ const synth = {
     }
     if (Object.keys(this.buffers).length) setSpkStatus("🎹 真钢琴音色已就绪");
   },
+  async prepareShifted(baseNotes, offsets) {
+    // 移调后的音也要备好真钢琴采样,不然会退回电子音(2026-10-28 用户反馈)
+    if (!this.ctx || !this.sfMap || !baseNotes || !baseNotes.length) return;
+    const all = [];
+    for (const o of offsets) for (const n of baseNotes) { const m = n + o; if (m >= 21 && m <= 108) all.push(m); }
+    const need = [...new Set(all)].filter((m) => !this.buffers[m] && this.sfMap[this.noteName(m)]);
+    for (const m of need) {
+      try {
+        const ab = await (await fetch(this.sfMap[this.noteName(m)])).arrayBuffer();
+        this.buffers[m] = await this.ctx.decodeAudioData(ab);
+      } catch (e) {}
+    }
+  },
   send(data, ts) {
     this.ensure(); if (!this.ctx) return;
     const hi = data[0] & 0xf0, ch = data[0] & 0x0f;
@@ -655,6 +668,7 @@ const sink = {
 
 // ---------------- 歌单与播放器 ----------------
 const items = [];        // {title, bytes, rate, transpose}
+let curSongNotes = [];   // 当前备好歌曲的原始音高集合(供移调预备采样)
 let curIdx = -1;
 let player = null;
 let engineTimer = null;
@@ -702,7 +716,7 @@ function cue(i) {
   let song;
   try { song = parseMidi(it.bytes); }
   catch (e) { $("songStatus").innerHTML = '<span class="warn">《' + it.title + '》读不了:' + e.message + "</span>"; return; }
-  { const ns = []; for (const e of song.events) { if ((e.data[0] & 0xf0) === 0x90 && e.data[2] > 0) ns.push(e.data[1]); } try { synth.prepare(ns); } catch (err) {} }
+  { const ns = []; for (const e of song.events) { if ((e.data[0] & 0xf0) === 0x90 && e.data[2] > 0) ns.push(e.data[1]); } curSongNotes = ns; try { synth.prepare(ns); synth.prepareShifted(ns, [-2, -1, 1, 2]); } catch (err) {} }
   player = createPlayer({
     song, sink, now: () => performance.now(),
     onState: refreshUI,
@@ -803,8 +817,8 @@ $("progressWrap").onclick = (ev) => {
 $("selAutoHold").onchange = () => { if (player) player.setAutoHold(parseInt($("selAutoHold").value, 10)); };
 $("btnSpeedUp").onclick = () => { if (player) { player.setRate(Math.min(1.5, player.getRate() + 0.05)); refreshUI(); } };
 $("btnSpeedDown").onclick = () => { if (player) { player.setRate(Math.max(0.5, player.getRate() - 0.05)); refreshUI(); } };
-$("btnTransUp").onclick = () => { if (player && player.getTranspose() < 11) { player.setTranspose(player.getTranspose() + 1); refreshUI(); } };
-$("btnTransDown").onclick = () => { if (player && player.getTranspose() > -11) { player.setTranspose(player.getTranspose() - 1); refreshUI(); } };
+$("btnTransUp").onclick = () => { if (player && player.getTranspose() < 11) { player.setTranspose(player.getTranspose() + 1); try { synth.prepareShifted(curSongNotes, [player.getTranspose()]); } catch (err) {} refreshUI(); } };
+$("btnTransDown").onclick = () => { if (player && player.getTranspose() > -11) { player.setTranspose(player.getTranspose() - 1); try { synth.prepareShifted(curSongNotes, [player.getTranspose()]); } catch (err) {} refreshUI(); } };
 
 $("btnAdd").onclick = () => $("fileInput").click();
 $("fileInput").onchange = async (ev) => {
