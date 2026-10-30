@@ -104,7 +104,7 @@
         <button id="segLocalOff">关(琴键不出声)</button>
       </div>
     </div>
-    <div class="note">开着:伴奏放着,你也能在琴上跟弹、补弹。关掉:按琴键不出声(把琴当音箱/录音时用)。这个开关直接从软件控制琴,不用去翻琴的菜单;只对连接的电钢琴有效。</div>
+    <div class="note">开着:伴奏放着,你也能在琴上跟弹、补弹。关掉:按琴键不出声(把琴当音箱/录音时用)。注意:有的琴不认软件这条命令(家里那台雅马哈 2026-10-30 实测就不认),那种琴请用琴自己的菜单开/关:按几次 FUNCTION 进 System → MIDI → Local Control。</div>
   </div>
   <div class="status" id="spkStatus">先点上面「🔊 试听一下」确认能出声。没声音先查:①手机静音开关关掉、音量调大;②在微信里打开的,点右上角「···」→「在浏览器打开」再试。</div>
 </div>
@@ -141,6 +141,14 @@
       <button class="secondary" id="btnTransDown">−</button>
       <span class="val" id="transVal">原调</span>
       <button class="secondary" id="btnTransUp">＋</button>
+    </div>
+  </div>
+  <div class="row">
+    <label>伴奏音量</label>
+    <div class="stepper">
+      <button class="secondary" id="btnVolDown">−</button>
+      <span class="val" id="volVal">100%</span>
+      <button class="secondary" id="btnVolUp">＋</button>
     </div>
   </div>
   <div class="row">
@@ -691,10 +699,23 @@ const midiSink = {
 
 // 当前发声口(可切换,引擎只认这个转接层)
 let useSpeaker = true;
+// 伴奏音量:在转接层按比例缩放每个音的力度(NoteOn velocity)。
+// 不依赖琴是否认 CC7/CC122,连琴和扬声器两种模式都有效;播放中改立即生效(引擎只提前排 0.15 秒)。
+// 注意必须复制一份再改:引擎的事件数组会循环重用,原地改会越播越大/越小。
+let volPct = 100;
+function scaleVol(data) {
+  if (volPct !== 100 && (data[0] & 0xf0) === 0x90 && data[2] > 0) {
+    const d = data.slice();
+    d[2] = Math.max(1, Math.min(127, Math.round(data[2] * volPct / 100)));
+    return d;
+  }
+  return data;
+}
 const sink = {
-  send(data, ts) { (useSpeaker ? synth : midiSink).send(data, ts); },
+  send(data, ts) { (useSpeaker ? synth : midiSink).send(scaleVol(data), ts); },
   silence() { (useSpeaker ? synth : midiSink).silence(); },
 };
+function updateVol() { const el = $("volVal"); if (el) el.textContent = volPct + "%"; }
 
 // ---------------- 琴键跟弹(Local Control,CC 122,通道 1) ----------------
 // 开(127):琴键直接驱动琴自己的音源,伴奏放着也能跟弹;关(0):琴键不出声。
@@ -917,6 +938,9 @@ $("btnSpeedUp").onclick = () => { if (player) { player.setRate(Math.min(1.5, pla
 $("btnSpeedDown").onclick = () => { if (player) { player.setRate(Math.max(0.5, player.getRate() - 0.05)); refreshUI(); } };
 $("btnTransUp").onclick = () => { if (player && player.getTranspose() < 11) { player.setTranspose(player.getTranspose() + 1); try { synth.prepareShifted(curSongNotes, [player.getTranspose()]); } catch (err) {} refreshUI(); } };
 $("btnTransDown").onclick = () => { if (player && player.getTranspose() > -11) { player.setTranspose(player.getTranspose() - 1); try { synth.prepareShifted(curSongNotes, [player.getTranspose()]); } catch (err) {} refreshUI(); } };
+$("btnVolUp").onclick = () => { volPct = Math.min(180, volPct + 20); updateVol(); };
+$("btnVolDown").onclick = () => { volPct = Math.max(40, volPct - 20); updateVol(); };
+updateVol();
 
 $("btnAdd").onclick = () => $("fileInput").click();
 $("fileInput").onchange = async (ev) => {
