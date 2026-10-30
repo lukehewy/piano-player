@@ -97,6 +97,14 @@
     <button id="btnConnect" style="margin-top:10px">连接钢琴</button>
     <select id="selOutput" style="display:none"></select>
     <div class="status" id="connStatus">先用线把手机和琴的 TO HOST 口接好,再点「连接钢琴」。</div>
+    <div class="row">
+      <label>🎹 琴键跟弹</label>
+      <div class="seg" style="flex:1">
+        <button id="segLocalOn" class="on">开(琴键能弹)</button>
+        <button id="segLocalOff">关(琴键不出声)</button>
+      </div>
+    </div>
+    <div class="note">开着:伴奏放着,你也能在琴上跟弹、补弹。关掉:按琴键不出声(把琴当音箱/录音时用)。这个开关直接从软件控制琴,不用去翻琴的菜单;只对连接的电钢琴有效。</div>
   </div>
   <div class="status" id="spkStatus">先点上面「🔊 试听一下」确认能出声。没声音先查:①手机静音开关关掉、音量调大;②在微信里打开的,点右上角「···」→「在浏览器打开」再试。</div>
 </div>
@@ -135,6 +143,10 @@
       <button class="secondary" id="btnTransUp">＋</button>
     </div>
   </div>
+  <div class="row">
+    <label>循环</label>
+    <button class="secondary" id="btnLoop" style="flex:1">🔁 循环:关</button>
+  </div>
 </div>
 
 <div class="card">
@@ -145,7 +157,7 @@
   <div class="status" id="songStatus"></div>
 </div>
 
-<p class="note">怎么用:①排歌单,把这次要唱的歌按顺序点好;②点大按钮开始,正常就是一口气唱完,不用管它;③只有唱得跟伴奏脱节时,按「✋ 等一等」:伴奏会在下一小节停住等(状态变绿「等唱中」),大家唱完这一句、点大按钮继续;整首普遍唱快了或慢了,用速度 ＋/− 顺势带;觉得调高了低了,用移调;④一首唱完,自动备好下一首停在待命,中间说话、祷告多久都行,点大按钮开始下一首。「自动等」一般不用开,那是给特别生疏的歌留着的:开了它才会每几小节自己停下来等。</p>
+<p class="note">怎么用:①排歌单,把这次要唱的歌按顺序点好;②点大按钮开始,正常就是一口气唱完,不用管它;③只有唱得跟伴奏脱节时,按「✋ 等一等」:伴奏会在下一小节停住等(状态变绿「等唱中」),大家唱完这一句、点大按钮继续;整首普遍唱快了或慢了,用速度 ＋/− 顺势带;觉得调高了低了,用移调;④一首唱完,自动备好下一首停在待命,中间说话、祷告多久都行,点大按钮开始下一首。「自动等」一般不用开,那是给特别生疏的歌留着的:开了它才会每几小节自己停下来等。想拿歌当背景音乐自己反复听,点「🔁 循环」:单曲 = 这一首反复播,全部 = 歌单从头到尾轮着播,播完回到第一首;再点一次就关掉,敬拜时记得关着,那样唱完一首才会停在待命。</p>
 
 <script>
 // MidiCore —— 解析标准 MIDI 文件(.mid),把所有轨道合成一条带秒数的时间线。
@@ -684,11 +696,29 @@ const sink = {
   silence() { (useSpeaker ? synth : midiSink).silence(); },
 };
 
+// ---------------- 琴键跟弹(Local Control,CC 122,通道 1) ----------------
+// 开(127):琴键直接驱动琴自己的音源,伴奏放着也能跟弹;关(0):琴键不出声。
+// 只在电钢琴模式且已连上琴时才发;手机扬声器模式不发任何东西。
+let localOn = true;
+function sendLocalControl() {
+  if (useSpeaker || !midiOutput) return;
+  try { midiOutput.send([0xb0, 122, localOn ? 127 : 0], performance.now()); } catch (e) {}
+}
+function setLocal(on) {
+  localOn = on;
+  $("segLocalOn").classList.toggle("on", on);
+  $("segLocalOff").classList.toggle("on", !on);
+  sendLocalControl();
+}
+
 // ---------------- 歌单与播放器 ----------------
 const items = [];        // {title, bytes, rate, transpose}
 let curSongNotes = [];   // 当前备好歌曲的原始音高集合(供移调预备采样)
 let curIdx = -1;
 let player = null;
+let loopMode = 0; // 循环:0=关 1=单曲 2=全部
+const LOOP_TXT = ["关", "单曲", "全部"];
+function updateLoopBtn() { const b = $("btnLoop"); if (b) b.textContent = "🔁 循环:" + LOOP_TXT[loopMode]; }
 let engineTimer = null;
 let wakeLock = null;
 
@@ -759,6 +789,30 @@ function removeItem(i) {
 }
 
 function handleEnd() {
+  // 循环=单曲:同一首从头重播(引擎在 ended 状态下 play() 会自动归零重播,
+  // 本首的速度/移调/自动等设置都原样保留;等待保持逻辑不受影响)
+  if (loopMode === 1 && player) {
+    sendLocalControl();
+    player.play();
+    keepWake();
+    refreshUI();
+    return;
+  }
+  // 循环=全部:自动续播下一首,最后一首播完回到第一首;下一首没备好谱子时退回原来的待命逻辑
+  if (loopMode === 2 && items.length) {
+    const nIdx = (curIdx + 1) % items.length;
+    if (!items[nIdx].pending) {
+      cue(nIdx);
+      if (player) {
+        sendLocalControl();
+        player.play();
+        keepWake();
+        $("songStatus").innerHTML = '<span class="ok">循环播放中:《' + items[nIdx].title + '》</span>';
+      }
+      refreshUI();
+      return;
+    }
+  }
   releaseWake();
   if (curIdx + 1 < items.length) {
     const next = items[curIdx + 1];
@@ -775,6 +829,7 @@ function handleEnd() {
 // ---------------- 界面刷新 ----------------
 const STATE_TXT = { idle: "待命", playing: "播放中", holding: "等唱中", paused: "已暂停", ended: "已结束" };
 function refreshUI() {
+  updateLoopBtn();
   const st = player ? player.getState() : "idle";
   const badge = $("stateBadge");
   badge.textContent = STATE_TXT[st] || st;
@@ -842,9 +897,12 @@ $("btnMain").onclick = () => {
   const st = player.getState();
   if (st === "holding") { player.resume(); keepWake(); }
   else if (st === "playing") player.pause();
-  else { player.play(); keepWake(); }
+  else { sendLocalControl(); player.play(); keepWake(); }
   refreshUI();
 };
+$("btnLoop").onclick = () => { loopMode = (loopMode + 1) % 3; updateLoopBtn(); };
+$("segLocalOn").onclick = () => setLocal(true);
+$("segLocalOff").onclick = () => setLocal(false);
 $("btnHold").onclick = () => { if (player) { player.holdButton(); refreshUI(); } };
 $("btnStop").onclick = () => { if (player) { player.stop(); releaseWake(); refreshUI(); } };
 $("progressWrap").onclick = (ev) => {
@@ -919,6 +977,7 @@ function refreshOutputs() {
     midiOutput = outs.find((o) => o.id === sel.value) || outs[0];
     sel.value = midiOutput.id;
     $("connStatus").innerHTML = '<span class="ok">已连接:' + (midiOutput.name || "钢琴") + "。播放时琴会发声。</span>";
+    sendLocalControl();
   } else {
     sel.style.display = "none";
     midiOutput = null;
@@ -927,6 +986,7 @@ function refreshOutputs() {
 }
 $("selOutput").onchange = () => {
   midiOutput = [...midiAccess.outputs.values()].find((o) => o.id === $("selOutput").value) || null;
+  sendLocalControl();
 };
 
 cue(0);
