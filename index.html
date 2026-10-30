@@ -54,8 +54,11 @@
   .transport button { flex: 1; font-size: 19px; padding: 16px 0; }
   #btnHold.armed { background: #d35400; color: #fff; }
   .row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
-  .row label { font-size: 16px; white-space: nowrap; }
+  .row label { font-size: 16px; white-space: nowrap; flex: 0 0 72px; }
   .row select { margin-top: 0; flex: 1; }
+  .row input[type="range"] { flex: 1; margin: 0; padding: 0; height: 34px; accent-color: #b98a2f; }
+  #pianoBox .row label { flex-basis: 92px; }
+  .volslider { margin-top: 2px; }
   .stepper { display: flex; align-items: center; gap: 10px; flex: 1; }
   .stepper button { width: 56px; font-size: 22px; padding: 10px 0; }
   .stepper .val { flex: 1; min-width: 0; text-align: center; font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -150,6 +153,10 @@
       <span class="val" id="volVal">100%</span>
       <button class="secondary" id="btnVolUp">＋</button>
     </div>
+  </div>
+  <div class="row volslider">
+    <label></label>
+    <input type="range" id="volSlider" min="40" max="180" step="20" value="100" aria-label="伴奏音量拨档">
   </div>
   <div class="row">
     <label>循环</label>
@@ -715,7 +722,10 @@ const sink = {
   send(data, ts) { (useSpeaker ? synth : midiSink).send(scaleVol(data), ts); },
   silence() { (useSpeaker ? synth : midiSink).silence(); },
 };
-function updateVol() { const el = $("volVal"); if (el) el.textContent = volPct + "%"; }
+function updateVol() {
+  const el = $("volVal"); if (el) el.textContent = volPct + "%";
+  const s = $("volSlider"); if (s) s.value = volPct;
+}
 
 // ---------------- 琴键跟弹(Local Control,CC 122,通道 1) ----------------
 // 开(127):琴键直接驱动琴自己的音源,伴奏放着也能跟弹;关(0):琴键不出声。
@@ -940,6 +950,7 @@ $("btnTransUp").onclick = () => { if (player && player.getTranspose() < 11) { pl
 $("btnTransDown").onclick = () => { if (player && player.getTranspose() > -11) { player.setTranspose(player.getTranspose() - 1); try { synth.prepareShifted(curSongNotes, [player.getTranspose()]); } catch (err) {} refreshUI(); } };
 $("btnVolUp").onclick = () => { volPct = Math.min(180, volPct + 20); updateVol(); };
 $("btnVolDown").onclick = () => { volPct = Math.max(40, volPct - 20); updateVol(); };
+$("volSlider").oninput = () => { const v = parseInt($("volSlider").value, 10); if (!isNaN(v)) { volPct = Math.max(40, Math.min(180, v)); updateVol(); } };
 updateVol();
 
 $("btnAdd").onclick = () => $("fileInput").click();
